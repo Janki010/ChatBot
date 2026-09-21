@@ -220,14 +220,12 @@ mode = st.radio(
     horizontal=True,
 )
 
-
 if mode == "🧪 Use Sample Files":
 
     st.subheader("🧪 Try with Sample Files")
 
     st.write(
-        "Use the built-in sample ZIP. "
-        "No download is required."
+        "Use the built-in sample ZIP to test the application."
     )
 
     selected_sample = st.selectbox(
@@ -237,29 +235,28 @@ if mode == "🧪 Use Sample Files":
 
     sample_path = SAMPLE_FILES[selected_sample]
 
-
-    st.info(
-        f"Selected: **{selected_sample}**"
-    )
-
     if not sample_path.exists():
 
         st.error(
-            f"❌ Sample file not found.\n\n"
-            f"Expected location:\n"
+            f"❌ Sample file not found:\n\n"
             f"`{sample_path}`"
-        )
-
-        st.warning(
-            "Make sure `sample.zip` exists inside "
-            "`samples/` and that the samples directory "
-            "is committed to GitHub."
         )
 
     else:
         st.success(
-            f"✓ Sample file found "
+            f"✓ Sample file ready "
             f"({sample_path.stat().st_size / 1024:.1f} KB)"
+        )
+
+        with open(sample_path, "rb") as file:
+            sample_bytes = file.read()
+
+        st.download_button(
+            label="⬇️ Download Sample ZIP",
+            data=sample_bytes,
+            file_name="sample.zip",
+            mime="application/zip",
+            use_container_width=True,
         )
 
         if st.button(
@@ -267,30 +264,16 @@ if mode == "🧪 Use Sample Files":
             type="primary",
             use_container_width=True,
         ):
-            with open(
-                sample_path,
-                "rb",
-            ) as file:
-
-                file_bytes = file.read()
-
-            content_type = (
-                mimetypes.guess_type(
-                    str(sample_path)
-                )[0]
-                or "application/zip"
-            )
 
             process_files(
                 [
                     {
                         "filename": sample_path.name,
-                        "bytes": file_bytes,
-                        "content_type": content_type,
+                        "bytes": sample_bytes,
+                        "content_type": "application/zip",
                     }
                 ]
             )
-
 
 else:
     st.subheader("📤 Upload Documents")
