@@ -339,14 +339,76 @@ def run_search(query: str):
 
 
 with st.sidebar:
+    st.markdown("## 📤 Upload Documents")
+
+    st.caption(
+        "Upload documents to add them to the searchable collection."
+    )
+
+    uploaded_files = st.file_uploader(
+        "Choose one or more files",
+        type=[
+            "pdf",
+            "doc",
+            "docx",
+            "ppt",
+            "pptx",
+            "xls",
+            "xlsx",
+            "csv",
+            "json",
+            "txt",
+            "md",
+            "png",
+            "jpg",
+            "jpeg",
+            "zip",
+        ],
+        accept_multiple_files=True,
+    )
+
+    if uploaded_files:
+
+        st.caption(
+            f"{len(uploaded_files)} file(s) selected"
+        )
+
+        for file in uploaded_files:
+            st.write(
+                f"📄 {file.name} "
+                f"({file.size / 1024:.1f} KB)"
+            )
+
+        if st.button(
+            "🚀 Upload & Process",
+            type="primary",
+            use_container_width=True,
+        ):
+
+            files = []
+
+            for uploaded_file in uploaded_files:
+
+                files.append(
+                    {
+                        "filename": uploaded_file.name,
+                        "bytes": uploaded_file.getvalue(),
+                        "content_type": (
+                            uploaded_file.type
+                            or "application/octet-stream"
+                        ),
+                    }
+                )
+
+            process_files(files)
+
+    st.divider()
 
     st.markdown("## 💡 Sample Questions")
 
     st.caption(
         "Try a question instantly using the built-in sample documents."
     )
-
-    st.divider()
 
     for index, question in enumerate(SAMPLE_QUESTIONS):
 
@@ -547,72 +609,6 @@ if st.session_state.search_results:
 
 
 st.divider()
-
-st.markdown(
-    '<div class="section-title">📤 Upload Your Documents</div>',
-    unsafe_allow_html=True,
-)
-
-st.caption(
-    "Upload one or more supported files to add them to the searchable document collection."
-)
-
-
-uploaded_files = st.file_uploader(
-    "Choose one or more files",
-    type=[
-        "pdf",
-        "doc",
-        "docx",
-        "ppt",
-        "pptx",
-        "xls",
-        "xlsx",
-        "csv",
-        "json",
-        "txt",
-        "md",
-        "png",
-        "jpg",
-        "jpeg",
-        "zip",
-    ],
-    accept_multiple_files=True,
-)
-
-
-if uploaded_files:
-    st.write(
-        f"**{len(uploaded_files)} file(s) selected**"
-    )
-
-    for file in uploaded_files:
-
-        st.write(
-            f"📄 {file.name} "
-            f"({file.size / 1024:.1f} KB)"
-        )
-
-    if st.button(
-        "🚀 Upload & Process",
-        type="primary",
-        use_container_width=True,
-    ):
-        files = []
-        for uploaded_file in uploaded_files:
-            files.append(
-                {
-                    "filename": uploaded_file.name,
-                    "bytes": uploaded_file.getvalue(),
-                    "content_type": (
-                        uploaded_file.type
-                        or "application/octet-stream"
-                    ),
-                }
-            )
-
-        process_files(files)
-
 
 if st.session_state.processed:
     st.divider()
