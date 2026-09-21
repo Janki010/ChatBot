@@ -1,21 +1,28 @@
-import os
+import io
+import mimetypes
+from pathlib import Path
 
-import requests
 import streamlit as st
 from dotenv import load_dotenv
+from fastapi import UploadFile
+from starlette.datastructures import Headers
+
+from app.services.ask_service import AskService
+from app.services.bm25_service import BM25Service
+from app.services.chunk_storage_service import ChunkStorageService
+from app.services.ingestion_service import IngestionService
+from app.services.upload_file_service import UploadFileService
 
 load_dotenv()
 
-API_URL = os.getenv("API_URL")
+BASE_DIR = Path(__file__).resolve().parent
+
+SAMPLES_DIR = BASE_DIR / "samples"
 
 SAMPLE_FILES = {
-    "📦 Sample Documents ZIP": "samples/sample.zip",
+    "📦 Sample Documents ZIP": SAMPLES_DIR / "sample.zip",
 }
 
-
-# =========================================================
-# Page configuration
-# =========================================================
 
 st.set_page_config(
     page_title="AI Document Q&A",
@@ -24,93 +31,81 @@ st.set_page_config(
 )
 
 
-# =========================================================
-# Session state
-# =========================================================
-
 if "processed" not in st.session_state:
     st.session_state.processed = False
 
 if "processed_files" not in st.session_state:
     st.session_state.processed_files = []
 
+if "bm25_service" not in st.session_state:
+    st.session_state.bm25_service = BM25Service()
 
-# =========================================================
-# API helpers
-# =========================================================
+upload_service = UploadFileService()
+
+chunk_storage_service = ChunkStorageService()
+
+ingestion_service = IngestionService(
+    bm25_service=st.session_state.bm25_service,
+)
+
+ask_service = AskService(
+    bm25_service=st.session_state.bm25_service,
+)
+
+
+
+def create_upload_file(
+    filename: str,
+    file_bytes: bytes,
+    content_type: str,
+) -> UploadFile:
+    return UploadFile(
+        file=io.BytesIO(file_bytes),
+        filename=filename,
+        headers=Headers(
+            {
+                "content-type": content_type,
+            }
+        ),
+    )
 
 def upload_file(
     filename: str,
     file_bytes: bytes,
     content_type: str,
 ):
-    response = requests.post(
-        f"{API_URL}/upload/file",
-        files={
-            "file": (
-                filename,
-                file_bytes,
-                content_type,
-            )
-        },
-        timeout=120,
+    upload_file_object = create_upload_file(
+        filename=filename,
+        file_bytes=file_bytes,
+        content_type=content_type,
     )
 
-    response.raise_for_status()
+    file_id = upload_service.upload_file(
+        upload_file_object
+    )
 
-    return response.json()
+    return {
+        "file_id": str(file_id),
+    }
 
 
 def ingest_file(file_id: str):
-    response = requests.post(
-        f"{API_URL}/ingestion/{file_id}",
-        timeout=300,
+    return ingestion_service.ingest_file(
+        file_id=file_id
     )
 
-    response.raise_for_status()
-
-    return response.json()
 
 
 def build_index():
-    response = requests.post(
-        f"{API_URL}/ingestion/build-index",
-        timeout=300,
-    )
-
-    response.raise_for_status()
-
-    return response.json()
+    return ingestion_service.build_index()
 
 
 def ask_question(query: str):
-    response = requests.post(
-        f"{API_URL}/ask/query",
-        params={
-            "query": query,
-        },
-        timeout=120,
+    return ask_service.ask(
+        query=query
     )
 
-    response.raise_for_status()
-
-    return response.json()
-
-
-# =========================================================
-# Process uploaded/sample files
-# =========================================================
-
-def process_files(files):
-    """
-    Common flow for both sample files and user uploads:
-
-        Upload
-          ↓
-        Ingest
-          ↓
-        Build BM25 index
-    """
+def process_files(files: list[dict]):
 
     st.session_state.processed = False
     st.session_state.processed_files = []
@@ -118,6 +113,11 @@ def process_files(files):
     progress = st.progress(0)
 
     try:
+
+        if not files:
+            st.warning("No files selected.")
+            return
+
         total_files = len(files)
 
         for index, file_data in enumerate(files):
@@ -130,12 +130,7 @@ def process_files(files):
                 f"Processing {filename}...",
                 expanded=True,
             ) as status:
-
-                # -----------------------------------------
-                # 1. Upload
-                # -----------------------------------------
-
-                st.write("⬆️ Uploading...")
+                st.write("⬆️ Saving file...")
 
                 upload_result = upload_file(
                     filename=filename,
@@ -146,19 +141,15 @@ def process_files(files):
                 file_id = upload_result["file_id"]
 
                 st.write(
-                    f"✓ Uploaded: `{file_id}`"
+                    f"✓ Saved: `{file_id}`"
                 )
-
-                # -----------------------------------------
-                # 2. Ingestion
-                # -----------------------------------------
 
                 st.write(
                     "⚙️ Extracting and creating chunks..."
                 )
 
                 ingestion_result = ingest_file(
-                    file_id
+                    file_id=file_id
                 )
 
                 chunks_count = ingestion_result.get(
@@ -190,13 +181,10 @@ def process_files(files):
                 (index + 1) / total_files
             )
 
-        # ---------------------------------------------
-        # 3. Build index ONCE after all files
-        # ---------------------------------------------
-
         with st.spinner(
             "🔎 Building search index..."
         ):
+
             index_result = build_index()
 
         st.session_state.processed = True
@@ -207,12 +195,6 @@ def process_files(files):
             f"file(s) processed and search index built."
         )
 
-    except requests.RequestException as exc:
-
-        st.error(
-            f"❌ Backend API error: {exc}"
-        )
-
     except Exception as exc:
 
         st.error(
@@ -220,21 +202,12 @@ def process_files(files):
         )
 
 
-# =========================================================
-# Header
-# =========================================================
-
 st.title("📄 AI Document Q&A")
 
 st.write(
     "Upload one or more documents and ask questions "
     "about their content."
 )
-
-
-# =========================================================
-# Choose testing method
-# =========================================================
 
 st.subheader("🚀 Get Started")
 
@@ -248,16 +221,12 @@ mode = st.radio(
 )
 
 
-# =========================================================
-# SAMPLE FILE MODE
-# =========================================================
-
 if mode == "🧪 Use Sample Files":
 
     st.subheader("🧪 Try with Sample Files")
 
     st.write(
-        "Use one of the built-in files. "
+        "Use the built-in sample ZIP. "
         "No download is required."
     )
 
@@ -268,24 +237,36 @@ if mode == "🧪 Use Sample Files":
 
     sample_path = SAMPLE_FILES[selected_sample]
 
+
     st.info(
         f"Selected: **{selected_sample}**"
     )
 
-    if st.button(
-        "🚀 Process Sample",
-        type="primary",
-        use_container_width=True,
-    ):
+    if not sample_path.exists():
 
-        if not os.path.exists(sample_path):
+        st.error(
+            f"❌ Sample file not found.\n\n"
+            f"Expected location:\n"
+            f"`{sample_path}`"
+        )
 
-            st.error(
-                f"Sample file not found: {sample_path}"
-            )
+        st.warning(
+            "Make sure `sample.zip` exists inside "
+            "`samples/` and that the samples directory "
+            "is committed to GitHub."
+        )
 
-        else:
+    else:
+        st.success(
+            f"✓ Sample file found "
+            f"({sample_path.stat().st_size / 1024:.1f} KB)"
+        )
 
+        if st.button(
+            "🚀 Process Sample",
+            type="primary",
+            use_container_width=True,
+        ):
             with open(
                 sample_path,
                 "rb",
@@ -293,45 +274,25 @@ if mode == "🧪 Use Sample Files":
 
                 file_bytes = file.read()
 
-            extension = os.path.splitext(
-                sample_path
-            )[1].lower()
-
-            content_types = {
-                ".pdf": "application/pdf",
-                ".xlsx": (
-                    "application/vnd.openxmlformats-officedocument"
-                    ".spreadsheetml.sheet"
-                ),
-                ".txt": "text/plain",
-                ".csv": "text/csv",
-                ".json": "application/json",
-                ".md": "text/markdown",
-                ".zip": "application/zip",
-            }
+            content_type = (
+                mimetypes.guess_type(
+                    str(sample_path)
+                )[0]
+                or "application/zip"
+            )
 
             process_files(
                 [
                     {
-                        "filename": os.path.basename(
-                            sample_path
-                        ),
+                        "filename": sample_path.name,
                         "bytes": file_bytes,
-                        "content_type": content_types.get(
-                            extension,
-                            "application/octet-stream",
-                        ),
+                        "content_type": content_type,
                     }
                 ]
             )
 
 
-# =========================================================
-# USER UPLOAD MODE
-# =========================================================
-
 else:
-
     st.subheader("📤 Upload Documents")
 
     uploaded_files = st.file_uploader(
@@ -374,11 +335,9 @@ else:
             type="primary",
             use_container_width=True,
         ):
-
             files = []
 
             for uploaded_file in uploaded_files:
-
                 files.append(
                     {
                         "filename": uploaded_file.name,
@@ -391,11 +350,6 @@ else:
                 )
 
             process_files(files)
-
-
-# =========================================================
-# PROCESSED FILES
-# =========================================================
 
 if st.session_state.processed:
 
@@ -410,20 +364,13 @@ if st.session_state.processed:
             f"— {file_info['chunks_count']} chunks"
         )
 
-
-    # =====================================================
-    # QUESTION / ANSWER
-    # =====================================================
-
     st.divider()
 
     st.subheader("💬 Ask a Question")
 
     query = st.text_input(
         "Ask anything about your documents",
-        placeholder=(
-            "Example: What was the total revenue?"
-        ),
+        placeholder="Example: What was the total revenue?",
     )
 
     if st.button(
@@ -439,68 +386,110 @@ if st.session_state.processed:
             )
 
         else:
-
             try:
-
                 with st.spinner(
                     "🔎 Searching your documents..."
                 ):
+                    results = ask_question(
+                        query=query
+                    )
 
-                    result = ask_question(query)
+                if not results:
+                    st.warning(
+                        "No relevant information found."
+                    )
+                else:
+                    st.subheader(
+                        "💡 Relevant Results"
+                    )
 
-                st.subheader("💡 Answer")
-
-                answer = result.get(
-                    "answer",
-                    result,
-                )
-
-                st.write(answer)
-
-                # -----------------------------------------
-                # Sources
-                # -----------------------------------------
-
-                sources = result.get(
-                    "sources",
-                    [],
-                )
-
-                if sources:
-
-                    st.subheader("📚 Sources")
-
-                    for source in sources:
-
-                        filename = source.get(
+                    for index, result in enumerate(
+                        results,
+                        start=1,
+                    ):
+                        filename = result.get(
                             "filename",
                             "Unknown file",
                         )
-
-                        source_type = source.get(
+                        source_type = result.get(
                             "source_type",
                             "",
                         )
-
-                        source_number = source.get(
+                        source_number = result.get(
                             "source_number",
                             "",
                         )
-
-                        st.write(
-                            f"📄 **{filename}** — "
-                            f"{source_type} "
-                            f"{source_number}"
+                        element_type = result.get(
+                            "element_type",
+                            "",
+                        )
+                        score = result.get(
+                            "score",
+                            0,
                         )
 
-            except requests.RequestException as exc:
+                        st.markdown(
+                            f"### {index}. {filename}"
+                        )
 
-                st.error(
-                    f"❌ Could not connect to API: {exc}"
-                )
+                        source_parts = []
+
+                        if source_type:
+                            source_parts.append(
+                                source_type
+                            )
+
+                        if source_number:
+                            source_parts.append(
+                                str(source_number)
+                            )
+
+                        source_location = " ".join(
+                            source_parts
+                        )
+
+                        if source_location:
+                            st.write(
+                                f"📍 **Location:** "
+                                f"{source_location}"
+                            )
+
+                        if element_type:
+                            st.write(
+                                f"🧩 **Type:** "
+                                f"{element_type}"
+                            )
+
+                        st.write(
+                            f"🔎 **BM25 Score:** "
+                            f"{score:.2f}"
+                        )
+
+                        metadata = result.get(
+                            "metadata",
+                            {},
+                        )
+
+                        if metadata:
+                            with st.expander(
+                                "View metadata"
+                            ):
+                                st.json(metadata)
+
+                        st.markdown(
+                            "**Content:**"
+                        )
+
+                        st.write(
+                            result.get(
+                                "text",
+                                "",
+                            )
+                        )
+
+                        st.divider()
 
             except Exception as exc:
-
                 st.error(
                     f"❌ Question failed: {exc}"
                 )
