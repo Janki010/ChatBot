@@ -1,65 +1,56 @@
-from docx import Document
-
+import os
+import subprocess
+import tempfile
 from app.extractors.base import BaseExtractor
+from app.extractors.pdf_extractor import PDFExtractor
+from app.services.visual_extraction_service import VisualExtractionService
 
 class DOCXExtractor(BaseExtractor):
+
+    def __init__(self):
+        self.visual_extraction_service = VisualExtractionService()
+        self.pdf_extractor = PDFExtractor()
+
     def extract(self, file_path: str) -> list[dict]:
-        results = []
+        pdf_path = self._convert(
+            file_path
+        )
 
-        document = Document(file_path)
+        result = self.pdf_extractor.extract(pdf_path)
 
-        # Extract paragraphs
-        for paragraph_number, paragraph in enumerate(
-            document.paragraphs,
-            start=1,
-        ):
-            text = paragraph.text.strip()
-
-            if not text:
-                continue
-
-            results.append({
-                "source_type": "paragraph",
-                "source_number": paragraph_number,
-                "element_type": "text",
-                "metadata": {
-                    "style": paragraph.style.name,
-                },
-                "text": text,
-            })
-
-        # Extract tables
-        for table_number, table in enumerate(
-            document.tables,
-            start=1,
-        ):
-            table_text = self._extract_table(table)
-
-            if not table_text:
-                continue
-
-            results.append({
-                "source_type": "table",
-                "source_number": table_number,
-                "element_type": "table",
-                "metadata": {
-                    "table_number": table_number,
-                },
-                "text": table_text,
-            })
-
-        return results
+        return result
 
     @staticmethod
-    def _extract_table(table) -> str:
-        rows = []
+    def _convert(file_path: str) -> str:
+        output_dir = tempfile.mkdtemp()
 
-        for row in table.rows:
-            cells = []
+        subprocess.run(
+            [
+                "libreoffice",
+                "--headless",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                output_dir,
+                file_path,
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
 
-            for cell in row.cells:
-                cells.append(cell.text.strip())
+        filename = os.path.splitext(
+            os.path.basename(file_path)
+        )[0]
 
-            rows.append(" | ".join(cells))
+        pdf_path = os.path.join(
+            output_dir,
+            f"{filename}.pdf",
+        )
 
-        return "\n".join(rows).strip()
+        if not os.path.exists(pdf_path):
+            raise RuntimeError(
+                f"Failed to convert DOCX to PDF: {file_path}"
+            )
+
+        return pdf_path

@@ -1,75 +1,60 @@
-from pptx import Presentation
+import os
+import subprocess
+import tempfile
 
 from app.extractors.base import BaseExtractor
+from app.extractors.pdf_extractor import PDFExtractor
+from app.services.visual_extraction_service import VisualExtractionService
+
 
 class PPTXExtractor(BaseExtractor):
+    def __init__(
+            self
+    ):
+        self.visual_extraction_service = VisualExtractionService()
+        self.pdf_extractor = PDFExtractor()
+
     def extract(self, file_path: str) -> list[dict]:
-        results = []
+        pdf_path = self._convert(
+            file_path
+        )
 
-        presentation = Presentation(file_path)
+        result = self.pdf_extractor.extract(pdf_path)
 
-        for slide_number, slide in enumerate(presentation.slides, start=1):
+        return result
 
-            # Extract text from slide
-            text_parts = []
-
-            for shape in slide.shapes:
-                if not hasattr(shape, "text"):
-                    continue
-
-                text = shape.text.strip()
-
-                if text:
-                    text_parts.append(text)
-
-            if text_parts:
-                results.append({
-                    "source_type": "slide",
-                    "source_number": slide_number,
-                    "element_type": "text",
-                    "text": "\n\n".join(text_parts),
-                })
-
-            # Extract tables from slide
-            for table_number, shape in enumerate(
-                self._get_tables(slide),
-                start=1,
-            ):
-                table_text = self._extract_table(shape)
-
-                if not table_text:
-                    continue
-
-                results.append({
-                    "source_type": "slide",
-                    "source_number": slide_number,
-                    "element_type": "table",
-                    "metadata": {
-                        "table_number": table_number,
-                    },
-                    "text": table_text,
-                })
-
-        return results
 
     @staticmethod
-    def _get_tables(slide):
-        return [
-            shape
-            for shape in slide.shapes
-            if shape.has_table
-        ]
+    def _convert(file_path: str) -> str:
+        output_dir = tempfile.mkdtemp()
 
-    @staticmethod
-    def _extract_table(table_shape) -> str:
-        rows = []
+        subprocess.run(
+            [
+                "libreoffice",
+                "--headless",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                output_dir,
+                file_path,
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
 
-        for row in table_shape.table.rows:
-            cells = []
+        filename = os.path.splitext(
+            os.path.basename(file_path)
+        )[0]
 
-            for cell in row.cells:
-                cells.append(cell.text.strip())
+        pdf_path = os.path.join(
+            output_dir,
+            f"{filename}.pdf",
+        )
 
-            rows.append(" | ".join(cells))
+        if not os.path.exists(pdf_path):
+            raise RuntimeError(
+                f"Failed to convert PPTX to PDF: {file_path}"
+            )
 
-        return "\n".join(rows).strip()
+        return pdf_path

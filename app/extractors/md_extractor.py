@@ -32,7 +32,6 @@ class MDExtractor(BaseExtractor):
             )
 
             if heading_match:
-                # Save previous section
                 if current_content:
                     text = "\n".join(
                         current_content

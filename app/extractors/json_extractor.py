@@ -30,7 +30,6 @@ class JSONExtractor(BaseExtractor):
     ):
         if isinstance(data, dict):
 
-            # Keep a logical object together.
             if self._is_flat_object(data):
                 results.append({
                     "source_type": "json",

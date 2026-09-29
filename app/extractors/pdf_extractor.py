@@ -1,18 +1,26 @@
 import fitz
 
 from app.extractors.base import BaseExtractor
+from app.services.visual_extraction_service import VisualExtractionService
 
 
 class PDFExtractor(BaseExtractor):
+
+    def __init__(self):
+        self.visual_extraction_service = (
+            VisualExtractionService()
+        )
+
     def extract(self, file_path: str) -> list[dict]:
         results = []
 
         document = fitz.open(file_path)
 
         try:
-            for page_number, page in enumerate(document, start=1):
-
-                # Extract normal text
+            for page_number, page in enumerate(
+                document,
+                start=1,
+            ):
                 text = page.get_text("text").strip()
 
                 if text:
@@ -26,25 +34,42 @@ class PDFExtractor(BaseExtractor):
                         "text": text,
                     })
 
-                # Extract tables
-                tables = self._extract_tables(page)
+                if not self._has_visual_content(page):
+                    continue
 
-                for table_number, table_text in enumerate(
-                    tables,
-                    start=1,
-                ):
-                    if not table_text:
-                        continue
+                pixmap = page.get_pixmap(
+                    matrix=fitz.Matrix(2, 2),
+                    alpha=False,
+                )
 
+                page_image = pixmap.tobytes("png")
+
+                visual_result = (
+                    self.visual_extraction_service.extract(
+                        page_image=page_image,
+                    )
+                )
+
+                visual_text = visual_result.get(
+                    "text",
+                    "",
+                ).strip()
+
+                if visual_text:
                     results.append({
                         "source_type": "page",
                         "source_number": page_number,
-                        "element_type": "table",
+                        "element_type": visual_result[
+                            "element_type"
+                        ],
                         "metadata": {
                             "page_number": page_number,
-                            "table_number": table_number,
+                            **visual_result.get(
+                                "metadata",
+                                {},
+                            ),
                         },
-                        "text": table_text,
+                        "text": visual_text,
                     })
 
         finally:
@@ -53,29 +78,8 @@ class PDFExtractor(BaseExtractor):
         return results
 
     @staticmethod
-    def _extract_tables(page) -> list[str]:
-        tables = []
+    def _has_visual_content(page) -> bool:
+        if page.get_drawings():
+            return True
 
-        try:
-            table_finder = page.find_tables()
-        except Exception:
-            return tables
-
-        for table in table_finder.tables:
-            rows = table.extract()
-
-            if not rows:
-                continue
-
-            table_text = "\n".join(
-                " | ".join(
-                    str(cell).strip() if cell is not None else ""
-                    for cell in row
-                )
-                for row in rows
-            ).strip()
-
-            if table_text:
-                tables.append(table_text)
-
-        return tables
+        return False

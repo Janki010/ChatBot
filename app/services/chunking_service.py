@@ -4,10 +4,10 @@ import uuid
 class ChunkingService:
 
     def chunk_documents(
-        self,
-        documents: list[dict],
-        file_id: str,
-        metadata: dict,
+            self,
+            documents: list[dict],
+            file_id: str,
+            metadata: dict,
     ) -> list[dict]:
         chunks = []
 
@@ -23,6 +23,10 @@ class ChunkingService:
 
             source_number = document.get(
                 "source_number"
+            )
+
+            element_type = document.get(
+                "element_type"
             )
 
             document_metadata = document.get(
@@ -43,7 +47,6 @@ class ChunkingService:
             text_chunks = self._split_text(text)
 
             for chunk_text in text_chunks:
-
                 chunk = {
                     "chunk_id": str(uuid.uuid4()),
                     "file_id": file_id,
@@ -51,19 +54,10 @@ class ChunkingService:
                     "file_type": file_type,
                     "source_type": source_type,
                     "source_number": source_number,
+                    "element_type": element_type,
+                    "metadata": document_metadata.copy(),
                     "text": chunk_text,
                 }
-
-                # Preserve ZIP information if available.
-                if document_metadata.get("zip_filename"):
-                    chunk["zip_filename"] = (
-                        document_metadata["zip_filename"]
-                    )
-
-                if document_metadata.get("zip_path"):
-                    chunk["zip_path"] = (
-                        document_metadata["zip_path"]
-                    )
 
                 chunks.append(chunk)
 
@@ -85,11 +79,7 @@ class ChunkingService:
         current_chunk = ""
 
         for paragraph in paragraphs:
-
-            # If a single paragraph itself is larger
-            # than max_chars, split it directly.
             if len(paragraph) > max_chars:
-
                 if current_chunk:
                     chunks.append(current_chunk)
                     current_chunk = ""
